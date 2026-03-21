@@ -462,6 +462,7 @@ local function decode_tlv(data, max_depth)
     while pos <= #data and safety < 500 do
         safety = safety + 1
         local ctrl = data[pos]
+        if not ctrl then break end
         pos = pos + 1
         local tag_ctrl = band(rshift(ctrl, 5), 0x07)
         local elem_type = band(ctrl, 0x1F)
@@ -749,14 +750,22 @@ function matter_proto.dissector(tvb, pinfo, tree)
         -- Try decryption with loaded keys
         local cached = decrypt_cache[pinfo.number]
         if cached then
-            local dec_tree = subtree:add( "Decrypted")
-            dec_tree:add( "Key: " .. cached.key_name)
-            parse_protocol_header(cached.plaintext, 1, dec_tree)
+            local dec_tree = subtree:add("Decrypted")
+            dec_tree:add("Key: " .. cached.key_name)
+            local proto_off = parse_protocol_header(cached.plaintext, 1, dec_tree)
 
-            -- Find TLV start (after protocol header)
-            local tlv_text = decode_tlv(cached.plaintext, 8)
-            if tlv_text and #tlv_text > 0 then
-                dec_tree:add( "TLV:\n" .. tlv_text)
+            -- Decode TLV after protocol header
+            if proto_off then
+                local tlv_data = {}
+                for i = proto_off, #cached.plaintext do
+                    tlv_data[#tlv_data + 1] = cached.plaintext[i]
+                end
+                if #tlv_data > 0 then
+                    local tlv_text = decode_tlv(tlv_data, 8)
+                    if tlv_text and #tlv_text > 0 then
+                        dec_tree:add("TLV:\n" .. tlv_text)
+                    end
+                end
             end
 
             -- Update info column
