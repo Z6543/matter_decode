@@ -373,8 +373,13 @@ end
 -- Use hex (0x...) or decimal. Omit or use 0 to try without node ID.
 
 local function parse_node_id(s)
-    -- Parse node ID from hex string, returns 8-byte LE table
-    local n = tonumber(s, 0) or 0
+    -- Parse node ID (decimal or 0x hex), returns 8-byte LE table
+    local n
+    if s and s:sub(1, 2) == "0x" then
+        n = tonumber(s:sub(3), 16) or 0
+    else
+        n = tonumber(s) or 0
+    end
     local bytes = {}
     for i = 1, 8 do
         bytes[i] = band(n, 0xFF)
