@@ -560,7 +560,15 @@ local function decode_tlv(data, max_depth)
             break
         end
     end
-    return table.concat(lines, "\n")
+    return lines
+end
+
+local function add_tlv_to_tree(tree, tlv_lines)
+    if not tlv_lines or #tlv_lines == 0 then return end
+    local tlv_tree = tree:add("TLV Payload")
+    for _, line in ipairs(tlv_lines) do
+        tlv_tree:add(line)
+    end
 end
 
 ----------------------------------------
@@ -661,8 +669,10 @@ local function parse_protocol_header(data, offset, tree)
     end
 
     tree:append_text(string.format(" [%s: %s]", proto_name, opcode_name))
-    local ph_text = "Protocol Header: " .. proto_name .. " " .. opcode_name .. "\n    " .. table.concat(lines, "\n    ")
-    tree:add(ph_text)
+    local ph_tree = tree:add("Protocol Header: " .. proto_name .. " " .. opcode_name)
+    for _, line in ipairs(lines) do
+        ph_tree:add(line)
+    end
 
     return next_offset, proto_name, opcode_name
 end
@@ -761,10 +771,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     tlv_data[#tlv_data + 1] = cached.plaintext[i]
                 end
                 if #tlv_data > 0 then
-                    local tlv_text = decode_tlv(tlv_data, 8)
-                    if tlv_text and #tlv_text > 0 then
-                        dec_tree:add("TLV:\n" .. tlv_text)
-                    end
+                    local tlv_lines = decode_tlv(tlv_data, 8)
+                    add_tlv_to_tree(dec_tree, tlv_lines)
                 end
             end
 
@@ -847,10 +855,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     local tlv_data = {}
                     for i = proto_off, #pt do tlv_data[#tlv_data + 1] = pt[i] end
                     if #tlv_data > 0 then
-                        local tlv_text = decode_tlv(tlv_data, 8)
-                        if tlv_text and #tlv_text > 0 then
-                            subtree:add( "TLV:\n" .. tlv_text)
-                        end
+                        local tlv_lines = decode_tlv(tlv_data, 8)
+                        add_tlv_to_tree(subtree, tlv_lines)
                     end
                 end
 
