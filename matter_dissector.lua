@@ -901,10 +901,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                 local tlv_data = {}
                 for i = proto_off, #payload_bytes do tlv_data[#tlv_data + 1] = payload_bytes[i] end
                 if #tlv_data > 0 then
-                    local tlv_text = decode_tlv(tlv_data, 8)
-                    if tlv_text and #tlv_text > 0 then
-                        subtree:add( "TLV:\n" .. tlv_text)
-                    end
+                    local tlv_lines = decode_tlv(tlv_data, 8)
+                    add_tlv_to_tree(subtree, tlv_lines)
                 end
             end
         end
