@@ -55,7 +55,32 @@ The dissector shows in the packet detail pane:
 - Protocol header (exchange flags, opcode, protocol ID)
 - Decoded TLV payload structure
 
-### 4. Offline CLI decryption (alternative)
+### 4. Derive keys from known CASE ECDH key (alternative to key logging)
+
+If one side (chip-tool or device) uses a fixed ECDH private key during CASE,
+session keys can be derived directly from the pcap without needing key logs:
+
+```bash
+python3 matter_case_derive.py capture.pcapng \
+  --ecdh-privkey <32-byte-hex-P256-private-scalar> \
+  --ipk <16-byte-hex-identity-protection-key> \
+  --initiator-node-id 0x1b669 \
+  --responder-node-id 0x6e \
+  -o matter_keys.log
+```
+
+The script:
+1. Finds CASE Sigma1/2/3 in the pcap
+2. Auto-detects which side uses the known key by matching public keys
+3. Computes the ECDH shared secret
+4. Derives I2R/R2I session keys via the Matter CASE key schedule
+5. Outputs a keylog file ready for the Wireshark dissector
+
+To use a fixed ECDH key, modify `CASESession.cpp` to replace the ephemeral
+key generation with a static key, or set `CHIP_CONFIG_SECURITY_TEST_MODE=1`
+(which bypasses ECDH entirely with a fixed shared secret).
+
+### 5. Offline CLI decryption (alternative)
 
 ```bash
 # Full-featured (parses keys from log file)
@@ -139,6 +164,7 @@ The key logging is controlled by `CHIP_DETAIL_LOGGING`. The relevant patch is in
 |------|-------------|
 | `matter_dissector.lua` | Wireshark Lua dissector with AES-CCM decryption |
 | `matter_keylog_extract.py` | Extracts session keys from chip-tool logs |
+| `matter_case_derive.py` | Derives session keys from known CASE ECDH private key + pcap |
 | `matter_decrypt.py` | CLI decryption with log file key parsing |
 | `matter_decrypt_simple.py` | Simple CLI decryption |
 | `matter_decode_message.py` | TLV message structure decoder |
