@@ -619,30 +619,29 @@ local function parse_protocol_header(data, offset, tree)
     end
     opcode_name = opcode_name or string.format("0x%02x", opcode)
 
-    -- Add to tree (use text items since data comes from byte array, not tvb)
-    local ph_tree = tree:add(matter_proto, nil, "Protocol Header")
-    ph_tree:add(matter_proto, nil,
+    -- Add to tree as text items (no tvb backing for decrypted data)
+    local lines = {
         string.format("Exchange Flags: 0x%02x (I:%d A:%d R:%d S:%d V:%d)",
             exchange_flags,
             band(exchange_flags, 0x01),
             band(rshift(exchange_flags, 1), 1),
             band(rshift(exchange_flags, 2), 1),
             band(rshift(exchange_flags, 3), 1),
-            band(rshift(exchange_flags, 4), 1)))
-    ph_tree:add(matter_proto, nil,
-        string.format("Protocol Opcode: 0x%02x (%s)", opcode, opcode_name))
-    ph_tree:add(matter_proto, nil,
-        string.format("Exchange ID: 0x%04x", exchange_id))
+            band(rshift(exchange_flags, 4), 1)),
+        string.format("Protocol Opcode: 0x%02x (%s)", opcode, opcode_name),
+        string.format("Exchange ID: 0x%04x", exchange_id),
+    }
     if vendor_id then
-        ph_tree:add(matter_proto, nil,
-            string.format("Protocol Vendor ID: 0x%04x", vendor_id))
+        lines[#lines + 1] = string.format("Protocol Vendor ID: 0x%04x", vendor_id)
     end
-    ph_tree:add(matter_proto, nil,
-        string.format("Protocol ID: 0x%04x (%s)", protocol_id_raw, proto_name))
+    lines[#lines + 1] = string.format("Protocol ID: 0x%04x (%s)", protocol_id_raw, proto_name)
     if ack_counter then
-        ph_tree:add(matter_proto, nil,
-            string.format("Acknowledged Counter: %d", ack_counter))
+        lines[#lines + 1] = string.format("Acknowledged Counter: %d", ack_counter)
     end
+
+    tree:append_text(string.format(" [%s: %s]", proto_name, opcode_name))
+    local ph_text = "Protocol Header: " .. proto_name .. " " .. opcode_name .. "\n    " .. table.concat(lines, "\n    ")
+    tree:add(ph_text)
 
     return next_offset, proto_name, opcode_name
 end
@@ -730,14 +729,14 @@ function matter_proto.dissector(tvb, pinfo, tree)
         -- Try decryption with loaded keys
         local cached = decrypt_cache[pinfo.number]
         if cached then
-            local dec_tree = subtree:add(matter_proto, nil, "Decrypted")
-            dec_tree:add(matter_proto, nil, "Key: " .. cached.key_name)
+            local dec_tree = subtree:add( "Decrypted")
+            dec_tree:add( "Key: " .. cached.key_name)
             parse_protocol_header(cached.plaintext, 1, dec_tree)
 
             -- Find TLV start (after protocol header)
             local tlv_text = decode_tlv(cached.plaintext, 8)
             if tlv_text and #tlv_text > 0 then
-                dec_tree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
+                dec_tree:add( "TLV:\n" .. tlv_text)
             end
 
             -- Update info column
@@ -785,7 +784,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
 
             if pt and key_name then
                 -- Parse protocol header for info column
-                local proto_off, proto_name, opcode_name = parse_protocol_header(pt, 1, subtree:add(matter_proto, nil, "Decrypted (" .. key_name .. ")"))
+                local proto_off, proto_name, opcode_name = parse_protocol_header(pt, 1, subtree:add( "Decrypted (" .. key_name .. ")"))
 
                 local info_str = nil
                 if proto_name and opcode_name then
@@ -801,7 +800,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     if #tlv_data > 0 then
                         local tlv_text = decode_tlv(tlv_data, 8)
                         if tlv_text and #tlv_text > 0 then
-                            subtree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
+                            subtree:add( "TLV:\n" .. tlv_text)
                         end
                     end
                 end
@@ -818,9 +817,9 @@ function matter_proto.dissector(tvb, pinfo, tree)
 
         -- Decryption failed
         if #session_keys > 0 then
-            subtree:add(matter_proto, nil, "[Decryption failed - keys don't match]"):set_generated()
+            subtree:add( "[Decryption failed - keys don't match]"):set_generated()
         else
-            subtree:add(matter_proto, nil, "[No keys loaded - set keylog file in preferences]"):set_generated()
+            subtree:add( "[No keys loaded - set keylog file in preferences]"):set_generated()
         end
 
         pinfo.cols.info = string.format("Matter Encrypted (Session 0x%04x, Counter %d)",
@@ -841,7 +840,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
                 if #tlv_data > 0 then
                     local tlv_text = decode_tlv(tlv_data, 8)
                     if tlv_text and #tlv_text > 0 then
-                        subtree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
+                        subtree:add( "TLV:\n" .. tlv_text)
                     end
                 end
             end
