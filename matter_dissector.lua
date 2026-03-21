@@ -294,18 +294,16 @@ local PROTOCOL_IDS = {
 
 local SC_OPCODES = {
     [0x10] = "StandaloneAck",
-    [0x20] = "MsgCounterSyncReq",
-    [0x21] = "MsgCounterSyncRsp",
-    [0x30] = "PBKDFParamRequest",
-    [0x31] = "PBKDFParamResponse",
-    [0x32] = "PASE_Pake1",
-    [0x33] = "PASE_Pake2",
-    [0x34] = "PASE_Pake3",
-    [0x40] = "CASE_Sigma1",
-    [0x41] = "CASE_Sigma2",
-    [0x42] = "CASE_Sigma3",
-    [0x43] = "CASE_Sigma2Resume",
-    [0x50] = "StatusReport",
+    [0x20] = "PBKDFParamRequest",
+    [0x21] = "PBKDFParamResponse",
+    [0x22] = "PASE_Pake1",
+    [0x23] = "PASE_Pake2",
+    [0x24] = "PASE_Pake3",
+    [0x30] = "CASE_Sigma1",
+    [0x31] = "CASE_Sigma2",
+    [0x32] = "CASE_Sigma3",
+    [0x33] = "CASE_Sigma2Resume",
+    [0x40] = "StatusReport",
 }
 
 local IM_OPCODES = {
@@ -367,6 +365,24 @@ local function bytes_to_hex(bytes)
     return table.concat(hex)
 end
 
+-- Keylog format:
+--   SESSION_ID  I2R_KEY  R2I_KEY  I2R_SRC_NODE  R2I_SRC_NODE
+-- Source node IDs are the sender's operational node ID used in the nonce.
+-- I2R_SRC_NODE = initiator's node ID (sender of I2R-encrypted messages)
+-- R2I_SRC_NODE = responder's node ID (sender of R2I-encrypted messages)
+-- Use hex (0x...) or decimal. Omit or use 0 to try without node ID.
+
+local function parse_node_id(s)
+    -- Parse node ID from hex string, returns 8-byte LE table
+    local n = tonumber(s, 0) or 0
+    local bytes = {}
+    for i = 1, 8 do
+        bytes[i] = band(n, 0xFF)
+        n = rshift(n, 8)
+    end
+    return bytes
+end
+
 local function load_keylog(path)
     if path == keylog_path_cache and #session_keys > 0 then return end
     session_keys = {}
@@ -385,13 +401,12 @@ local function load_keylog(path)
             if #parts >= 3 then
                 local i2r = hex_to_bytes(parts[2])
                 local r2i = hex_to_bytes(parts[3])
-                local src = 0
-                if #parts >= 4 then
-                    src = tonumber(parts[4], 0) or 0
-                end
+                local i2r_src = parse_node_id(parts[4] or "0")
+                local r2i_src = parse_node_id(parts[5] or "0")
                 if #i2r == 16 and #r2i == 16 then
                     session_keys[#session_keys + 1] = {
-                        i2r = i2r, r2i = r2i, src_node = src
+                        i2r = i2r, r2i = r2i,
+                        i2r_src = i2r_src, r2i_src = r2i_src,
                     }
                 end
             end
@@ -553,9 +568,9 @@ local decrypt_cache = {}
 local matter_proto = Proto("matter_decrypt", "Matter Protocol")
 
 local pf_msg_flags     = ProtoField.uint8("matterd.msg_flags", "Message Flags", base.HEX)
-local pf_version       = ProtoField.uint8("matterd.version", "Version", base.DEC, nil, 0x0F)
-local pf_s_flag        = ProtoField.bool("matterd.s_flag", "Source Node ID Present", 8, nil, 0x10)
-local pf_dsiz          = ProtoField.uint8("matterd.dsiz", "DSIZ", base.DEC, DSIZ_NAMES, 0x60)
+local pf_version       = ProtoField.uint8("matterd.version", "Version", base.DEC, nil, 0xF0)
+local pf_s_flag        = ProtoField.bool("matterd.s_flag", "Source Node ID Present", 8, nil, 0x04)
+local pf_dsiz          = ProtoField.uint8("matterd.dsiz", "DSIZ", base.DEC, DSIZ_NAMES, 0x03)
 local pf_session_id    = ProtoField.uint16("matterd.session_id", "Session ID", base.HEX)
 local pf_sec_flags     = ProtoField.uint8("matterd.security_flags", "Security Flags", base.HEX)
 local pf_privacy       = ProtoField.bool("matterd.privacy", "Privacy", 8, nil, 0x01)
@@ -671,8 +686,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
     flags_tree:add(pf_dsiz, tvb(offset, 1))
     offset = offset + 1
 
-    local s_flag = band(rshift(msg_flags, 4), 1)
-    local dsiz = band(rshift(msg_flags, 5), 3)
+    local s_flag = band(rshift(msg_flags, 2), 1)
+    local dsiz = band(msg_flags, 3)
 
     -- Session ID
     local session_id = tvb(offset, 2):le_uint()
@@ -746,20 +761,20 @@ function matter_proto.dissector(tvb, pinfo, tree)
             return length
         end
 
-        -- Build nonce: sec_flags(1) | msg_counter(4, LE) | src_node_id(8, LE)
-        local nonce = {}
-        nonce[1] = sec_flags
-        nonce[2] = band(msg_counter, 0xFF)
-        nonce[3] = band(rshift(msg_counter, 8), 0xFF)
-        nonce[4] = band(rshift(msg_counter, 16), 0xFF)
-        nonce[5] = band(rshift(msg_counter, 24), 0xFF)
-        -- Source node ID as 8 bytes LE (read raw bytes from tvb)
+        -- Build nonce prefix: sec_flags(1) | msg_counter(4, LE)
+        local nonce_prefix = {}
+        nonce_prefix[1] = sec_flags
+        nonce_prefix[2] = band(msg_counter, 0xFF)
+        nonce_prefix[3] = band(rshift(msg_counter, 8), 0xFF)
+        nonce_prefix[4] = band(rshift(msg_counter, 16), 0xFF)
+        nonce_prefix[5] = band(rshift(msg_counter, 24), 0xFF)
+
+        -- Source node ID from header (if present)
+        local hdr_src_node = {}
         if src_node_offset then
             for i = 0, 7 do
-                nonce[6 + i] = tvb(src_node_offset + i, 1):uint()
+                hdr_src_node[i + 1] = tvb(src_node_offset + i, 1):uint()
             end
-        else
-            for i = 6, 13 do nonce[i] = 0 end
         end
 
         -- AAD is the message header
@@ -768,17 +783,37 @@ function matter_proto.dissector(tvb, pinfo, tree)
         -- Ciphertext including MIC tag
         local ct_with_tag = str_to_bytes(tvb:raw(header_len, payload_len))
 
+        -- Build nonce with a given 8-byte source node ID
+        local function make_nonce(src_bytes)
+            local n = {}
+            for i = 1, 5 do n[i] = nonce_prefix[i] end
+            for i = 1, 8 do n[5 + i] = src_bytes[i] or 0 end
+            return n
+        end
+
         for ki, kp in ipairs(session_keys) do
-            -- Try I2R key
-            local pt = aes_ccm_decrypt(kp.i2r, nonce, aad, ct_with_tag)
+            -- For each key pair, try both keys with their respective source node IDs
+            -- I2R: sender is initiator, nonce uses initiator's node ID (i2r_src)
+            -- R2I: sender is responder, nonce uses responder's node ID (r2i_src)
+            -- Also try with header source node and zero as fallbacks
+            local attempts = {
+                {key = kp.i2r, src = kp.i2r_src, name = "I2R"},
+                {key = kp.r2i, src = kp.r2i_src, name = "R2I"},
+            }
+            -- Add fallback attempts with zero node ID if configured IDs fail
+            if #hdr_src_node > 0 then
+                table.insert(attempts, {key = kp.i2r, src = hdr_src_node, name = "I2R+hdr"})
+                table.insert(attempts, {key = kp.r2i, src = hdr_src_node, name = "R2I+hdr"})
+            end
+
+            local pt = nil
             local key_name = nil
-            if pt then
-                key_name = string.format("I2R (key set #%d)", ki)
-            else
-                -- Try R2I key
-                pt = aes_ccm_decrypt(kp.r2i, nonce, aad, ct_with_tag)
+            for _, att in ipairs(attempts) do
+                local nonce = make_nonce(att.src)
+                pt = aes_ccm_decrypt(att.key, nonce, aad, ct_with_tag)
                 if pt then
-                    key_name = string.format("R2I (key set #%d)", ki)
+                    key_name = string.format("%s (key set #%d)", att.name, ki)
+                    break
                 end
             end
 
@@ -815,11 +850,19 @@ function matter_proto.dissector(tvb, pinfo, tree)
             end
         end
 
-        -- Decryption failed
+        -- Decryption failed — show diagnostics
         if #session_keys > 0 then
-            subtree:add( "[Decryption failed - keys don't match]"):set_generated()
+            local diag = subtree:add("[Decryption failed - check source node IDs in keylog]")
+            diag:add(string.format("AAD (%d bytes): %s", #aad, bytes_to_hex(aad)))
+            diag:add(string.format("Header len: %d, Payload len: %d, S flag: %d, DSIZ: %d",
+                header_len, payload_len, s_flag, dsiz))
+            for ki, kp in ipairs(session_keys) do
+                diag:add(string.format("Key #%d: I2R=%s (src=%s) R2I=%s (src=%s)",
+                    ki, bytes_to_hex(kp.i2r), bytes_to_hex(kp.i2r_src),
+                    bytes_to_hex(kp.r2i), bytes_to_hex(kp.r2i_src)))
+            end
         else
-            subtree:add( "[No keys loaded - set keylog file in preferences]"):set_generated()
+            subtree:add("[No keys loaded - set keylog file in preferences]")
         end
 
         pinfo.cols.info = string.format("Matter Encrypted (Session 0x%04x, Counter %d)",
