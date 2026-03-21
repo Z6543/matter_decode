@@ -566,28 +566,14 @@ local pf_src_node      = ProtoField.uint64("matterd.src_node", "Source Node ID",
 local pf_dst_node      = ProtoField.uint64("matterd.dst_node", "Destination Node ID", base.HEX)
 local pf_dst_group     = ProtoField.uint16("matterd.dst_group", "Destination Group ID", base.HEX)
 
-local pf_exchange_flags = ProtoField.uint8("matterd.exchange_flags", "Exchange Flags", base.HEX)
-local pf_opcode        = ProtoField.uint8("matterd.opcode", "Protocol Opcode", base.HEX)
-local pf_exchange_id   = ProtoField.uint16("matterd.exchange_id", "Exchange ID", base.HEX)
-local pf_protocol_id   = ProtoField.uint16("matterd.protocol_id", "Protocol ID", base.HEX)
-local pf_vendor_id     = ProtoField.uint16("matterd.vendor_id", "Protocol Vendor ID", base.HEX)
-local pf_ack_counter   = ProtoField.uint32("matterd.ack_counter", "Acknowledged Counter", base.DEC)
-
 local pf_encrypted     = ProtoField.bytes("matterd.encrypted", "Encrypted Payload")
 local pf_mic           = ProtoField.bytes("matterd.mic", "MIC Tag")
-local pf_decrypted     = ProtoField.bytes("matterd.decrypted", "Decrypted Payload")
-local pf_decrypt_key   = ProtoField.string("matterd.decrypt_key", "Decryption Key Used")
-local pf_tlv           = ProtoField.string("matterd.tlv", "TLV Data")
-local pf_payload       = ProtoField.bytes("matterd.payload", "Payload")
 
 matter_proto.fields = {
     pf_msg_flags, pf_version, pf_s_flag, pf_dsiz,
     pf_session_id, pf_sec_flags, pf_privacy, pf_control, pf_sess_type,
     pf_msg_counter, pf_src_node, pf_dst_node, pf_dst_group,
-    pf_exchange_flags, pf_opcode, pf_exchange_id, pf_protocol_id,
-    pf_vendor_id, pf_ack_counter,
-    pf_encrypted, pf_mic, pf_decrypted, pf_decrypt_key,
-    pf_tlv, pf_payload,
+    pf_encrypted, pf_mic,
 }
 
 local keylog_pref = Pref.string("keylog_file", "", "Path to Matter session key log file")
@@ -633,23 +619,29 @@ local function parse_protocol_header(data, offset, tree)
     end
     opcode_name = opcode_name or string.format("0x%02x", opcode)
 
-    -- Add to tree
+    -- Add to tree (use text items since data comes from byte array, not tvb)
     local ph_tree = tree:add(matter_proto, nil, "Protocol Header")
-    ph_tree:add(pf_exchange_flags, exchange_flags):append_text(
-        string.format(" (I:%d A:%d R:%d S:%d V:%d)",
+    ph_tree:add(matter_proto, nil,
+        string.format("Exchange Flags: 0x%02x (I:%d A:%d R:%d S:%d V:%d)",
+            exchange_flags,
             band(exchange_flags, 0x01),
             band(rshift(exchange_flags, 1), 1),
             band(rshift(exchange_flags, 2), 1),
             band(rshift(exchange_flags, 3), 1),
             band(rshift(exchange_flags, 4), 1)))
-    ph_tree:add(pf_opcode, opcode):append_text(" (" .. opcode_name .. ")")
-    ph_tree:add(pf_exchange_id, exchange_id)
+    ph_tree:add(matter_proto, nil,
+        string.format("Protocol Opcode: 0x%02x (%s)", opcode, opcode_name))
+    ph_tree:add(matter_proto, nil,
+        string.format("Exchange ID: 0x%04x", exchange_id))
     if vendor_id then
-        ph_tree:add(pf_vendor_id, vendor_id)
+        ph_tree:add(matter_proto, nil,
+            string.format("Protocol Vendor ID: 0x%04x", vendor_id))
     end
-    ph_tree:add(pf_protocol_id, protocol_id_raw):append_text(" (" .. proto_name .. ")")
+    ph_tree:add(matter_proto, nil,
+        string.format("Protocol ID: 0x%04x (%s)", protocol_id_raw, proto_name))
     if ack_counter then
-        ph_tree:add(pf_ack_counter, ack_counter)
+        ph_tree:add(matter_proto, nil,
+            string.format("Acknowledged Counter: %d", ack_counter))
     end
 
     return next_offset, proto_name, opcode_name
@@ -739,13 +731,13 @@ function matter_proto.dissector(tvb, pinfo, tree)
         local cached = decrypt_cache[pinfo.number]
         if cached then
             local dec_tree = subtree:add(matter_proto, nil, "Decrypted")
-            dec_tree:add(pf_decrypt_key, cached.key_name)
+            dec_tree:add(matter_proto, nil, "Key: " .. cached.key_name)
             parse_protocol_header(cached.plaintext, 1, dec_tree)
 
             -- Find TLV start (after protocol header)
             local tlv_text = decode_tlv(cached.plaintext, 8)
             if tlv_text and #tlv_text > 0 then
-                dec_tree:add(pf_tlv, tlv_text)
+                dec_tree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
             end
 
             -- Update info column
@@ -809,7 +801,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     if #tlv_data > 0 then
                         local tlv_text = decode_tlv(tlv_data, 8)
                         if tlv_text and #tlv_text > 0 then
-                            subtree:add(pf_tlv, "TLV:\n" .. tlv_text)
+                            subtree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
                         end
                     end
                 end
@@ -849,7 +841,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
                 if #tlv_data > 0 then
                     local tlv_text = decode_tlv(tlv_data, 8)
                     if tlv_text and #tlv_text > 0 then
-                        subtree:add(pf_tlv, "TLV:\n" .. tlv_text)
+                        subtree:add(matter_proto, nil, "TLV:\n" .. tlv_text)
                     end
                 end
             end
