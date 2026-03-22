@@ -346,8 +346,8 @@ local TLV_TYPES = {
 ----------------------------------------
 -- Key Management
 ----------------------------------------
-local session_keys = {}  -- { {i2r={bytes}, r2i={bytes}, src_node=number}, ... }
-local keylog_path_cache = ""
+local session_keys = {}  -- { {i2r={bytes}, r2i={bytes}, i2r_src={bytes}, r2i_src={bytes}}, ... }
+local keys_cache = ""
 
 local function hex_to_bytes(hex)
     local bytes = {}
@@ -365,17 +365,12 @@ local function bytes_to_hex(bytes)
     return table.concat(hex)
 end
 
--- Keylog format:
---   SESSION_ID  I2R_KEY  R2I_KEY  I2R_SRC_NODE  R2I_SRC_NODE
--- Source node IDs are the sender's operational node ID used in the nonce.
--- I2R_SRC_NODE = initiator's node ID (sender of I2R-encrypted messages)
--- R2I_SRC_NODE = responder's node ID (sender of R2I-encrypted messages)
--- Use hex (0x...) or decimal. Omit or use 0 to try without node ID.
-
 local function parse_node_id(s)
     -- Parse node ID (decimal or 0x hex), returns 8-byte LE table
     local n
-    if s and s:sub(1, 2) == "0x" then
+    if not s or s == "" then
+        n = 0
+    elseif s:sub(1, 2) == "0x" then
         n = tonumber(s:sub(3), 16) or 0
     else
         n = tonumber(s) or 0
@@ -388,37 +383,23 @@ local function parse_node_id(s)
     return bytes
 end
 
-local function load_keylog(path)
-    if path == keylog_path_cache and #session_keys > 0 then return end
+local function load_keys_from_prefs(i2r_hex, r2i_hex, i2r_node_str, r2i_node_str)
+    local cache_key = (i2r_hex or "") .. (r2i_hex or "") .. (i2r_node_str or "") .. (r2i_node_str or "")
+    if cache_key == keys_cache and #session_keys > 0 then return end
     session_keys = {}
-    if not path or path == "" then return end
+    keys_cache = cache_key
 
-    local f = io.open(path, "r")
-    if not f then return end
+    if not i2r_hex or i2r_hex == "" or not r2i_hex or r2i_hex == "" then return end
 
-    for line in f:lines() do
-        line = line:match("^%s*(.-)%s*$")
-        if line ~= "" and line:sub(1, 1) ~= "#" then
-            local parts = {}
-            for part in line:gmatch("%S+") do
-                parts[#parts + 1] = part
-            end
-            if #parts >= 3 then
-                local i2r = hex_to_bytes(parts[2])
-                local r2i = hex_to_bytes(parts[3])
-                local i2r_src = parse_node_id(parts[4] or "0")
-                local r2i_src = parse_node_id(parts[5] or "0")
-                if #i2r == 16 and #r2i == 16 then
-                    session_keys[#session_keys + 1] = {
-                        i2r = i2r, r2i = r2i,
-                        i2r_src = i2r_src, r2i_src = r2i_src,
-                    }
-                end
-            end
-        end
-    end
-    f:close()
-    keylog_path_cache = path
+    local i2r = hex_to_bytes(i2r_hex)
+    local r2i = hex_to_bytes(r2i_hex)
+    if #i2r ~= 16 or #r2i ~= 16 then return end
+
+    session_keys[1] = {
+        i2r = i2r, r2i = r2i,
+        i2r_src = parse_node_id(i2r_node_str),
+        r2i_src = parse_node_id(r2i_node_str),
+    }
 end
 
 ----------------------------------------
@@ -605,8 +586,10 @@ matter_proto.fields = {
     pf_encrypted, pf_mic,
 }
 
-local keylog_pref = Pref.string("keylog_file", "", "Path to Matter session key log file")
-matter_proto.prefs.keylog_file = keylog_pref
+matter_proto.prefs.i2r_key = Pref.string("i2r_key", "", "I2R Key (32 hex chars, initiator to responder)")
+matter_proto.prefs.r2i_key = Pref.string("r2i_key", "", "R2I Key (32 hex chars, responder to initiator)")
+matter_proto.prefs.i2r_node = Pref.string("i2r_src_node", "0", "I2R sender node ID (hex 0x... or decimal, 0 for test mode)")
+matter_proto.prefs.r2i_node = Pref.string("r2i_src_node", "0", "R2I sender node ID (hex 0x... or decimal, 0 for test mode)")
 
 ----------------------------------------
 -- Protocol Header Parser
@@ -685,7 +668,12 @@ function matter_proto.dissector(tvb, pinfo, tree)
     if length < 8 then return 0 end
 
     -- Load keys from preferences
-    load_keylog(matter_proto.prefs.keylog_file)
+    load_keys_from_prefs(
+        matter_proto.prefs.i2r_key,
+        matter_proto.prefs.r2i_key,
+        matter_proto.prefs.i2r_node,
+        matter_proto.prefs.r2i_node
+    )
 
     pinfo.cols.protocol = "Matter"
 
