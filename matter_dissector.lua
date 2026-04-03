@@ -344,6 +344,184 @@ local TLV_TYPES = {
 }
 
 ----------------------------------------
+-- Matter Interaction Model Schemas
+----------------------------------------
+local CLUSTER_NAMES = {
+    [0x0003] = "Identify", [0x0004] = "Groups", [0x0005] = "Scenes",
+    [0x0006] = "OnOff", [0x0008] = "LevelControl",
+    [0x001D] = "Descriptor", [0x001E] = "Binding", [0x001F] = "AccessControl",
+    [0x0028] = "BasicInformation", [0x002A] = "OtaSoftwareUpdateRequestor",
+    [0x002B] = "LocalizationConfiguration", [0x002F] = "PowerSource",
+    [0x0030] = "GeneralCommissioning", [0x0031] = "NetworkCommissioning",
+    [0x0033] = "GeneralDiagnostics", [0x0034] = "SoftwareDiagnostics",
+    [0x0035] = "ThreadNetworkDiagnostics", [0x003C] = "AdministratorCommissioning",
+    [0x003E] = "OperationalCredentials", [0x003F] = "GroupKeyManagement",
+    [0x0040] = "FixedLabel", [0x0041] = "UserLabel",
+    [0x0101] = "DoorLock", [0x0102] = "WindowCovering",
+    [0x0201] = "Thermostat", [0x0300] = "ColorControl",
+    [0x0406] = "OccupancySensing",
+}
+
+local IM_STATUS_NAMES = {
+    [0x00] = "SUCCESS", [0x01] = "FAILURE",
+    [0x7E] = "UNSUPPORTED_ENDPOINT", [0x7F] = "UNSUPPORTED_ACCESS",
+    [0x80] = "UNSUPPORTED_COMMAND", [0x85] = "UNSUPPORTED_ATTRIBUTE",
+    [0x86] = "CONSTRAINT_ERROR", [0x87] = "UNSUPPORTED_WRITE",
+    [0x88] = "RESOURCE_EXHAUSTED", [0x89] = "NOT_FOUND",
+    [0x8B] = "INVALID_DATA_TYPE", [0x92] = "DATA_VERSION_MISMATCH",
+    [0x94] = "TIMEOUT", [0xC3] = "BUSY",
+    [0xC4] = "NEEDS_TIMED_INTERACTION", [0xC5] = "UNSUPPORTED_EVENT",
+}
+
+local S_AttributePathIB = {
+    _name = "AttributePathIB",
+    [0] = { _name = "EnableTagCompression" }, [1] = { _name = "Node" },
+    [2] = { _name = "Endpoint" }, [3] = { _name = "Cluster" },
+    [4] = { _name = "Attribute" }, [5] = { _name = "ListIndex" },
+}
+
+local S_EventPathIB = {
+    _name = "EventPathIB",
+    [0] = { _name = "Node" }, [1] = { _name = "Endpoint" },
+    [2] = { _name = "Cluster" }, [3] = { _name = "Event" },
+    [4] = { _name = "IsUrgent" },
+}
+
+local S_EventFilterIB = {
+    _name = "EventFilterIB",
+    [0] = { _name = "Node" }, [1] = { _name = "EventMin" },
+}
+
+local S_DataVersionFilterIB = {
+    _name = "DataVersionFilterIB",
+    [0] = S_AttributePathIB, [1] = { _name = "DataVersion" },
+}
+
+local S_StatusIB = {
+    _name = "StatusIB",
+    [0] = { _name = "Status" }, [1] = { _name = "ClusterStatus" },
+}
+
+local S_CommandPathIB = {
+    _name = "CommandPathIB",
+    [0] = { _name = "Endpoint" }, [1] = { _name = "Cluster" },
+    [2] = { _name = "Command" },
+}
+
+local S_CommandDataIB = {
+    _name = "CommandDataIB",
+    [0] = S_CommandPathIB, [1] = { _name = "CommandFields" },
+}
+
+local S_CommandStatusIB = {
+    _name = "CommandStatusIB",
+    [0] = S_CommandPathIB, [1] = S_StatusIB,
+}
+
+local S_InvokeResponseIB = {
+    _name = "InvokeResponseIB",
+    [0] = S_CommandDataIB, [1] = S_CommandStatusIB,
+}
+
+local S_AttributeStatusIB = {
+    _name = "AttributeStatusIB",
+    [0] = S_AttributePathIB, [1] = S_StatusIB,
+}
+
+local S_AttributeDataIB = {
+    _name = "AttributeDataIB",
+    [0] = { _name = "DataVersion" }, [1] = S_AttributePathIB,
+    [2] = { _name = "Data" },
+}
+
+local S_AttributeReportIB = {
+    _name = "AttributeReportIB",
+    [0] = S_AttributeStatusIB, [1] = S_AttributeDataIB,
+}
+
+local S_EventDataIB = {
+    _name = "EventDataIB",
+    [0] = S_EventPathIB, [1] = { _name = "EventNumber" },
+    [2] = { _name = "Priority" }, [3] = { _name = "EpochTimestamp" },
+    [4] = { _name = "SystemTimestamp" }, [5] = { _name = "DeltaEpochTimestamp" },
+    [6] = { _name = "DeltaSystemTimestamp" }, [7] = { _name = "Data" },
+}
+
+local S_EventStatusIB = {
+    _name = "EventStatusIB",
+    [0] = S_EventPathIB, [1] = S_StatusIB,
+}
+
+local S_EventReportIB = {
+    _name = "EventReportIB",
+    [0] = S_EventStatusIB, [1] = S_EventDataIB,
+}
+
+local IM_SCHEMAS = {
+    [0x01] = { _name = "StatusResponse",
+        [0] = { _name = "Status" }, [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x02] = { _name = "ReadRequest",
+        [0] = { _name = "AttributeRequests", _elem = S_AttributePathIB },
+        [1] = { _name = "EventRequests", _elem = S_EventPathIB },
+        [2] = { _name = "EventFilters", _elem = S_EventFilterIB },
+        [3] = { _name = "FabricFiltered" },
+        [4] = { _name = "DataVersionFilters", _elem = S_DataVersionFilterIB },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x03] = { _name = "SubscribeRequest",
+        [0] = { _name = "KeepSubscriptions" },
+        [1] = { _name = "MinIntervalFloor" }, [2] = { _name = "MaxIntervalCeiling" },
+        [3] = { _name = "AttributeRequests", _elem = S_AttributePathIB },
+        [4] = { _name = "EventRequests", _elem = S_EventPathIB },
+        [5] = { _name = "EventFilters", _elem = S_EventFilterIB },
+        [6] = { _name = "FabricFiltered" },
+        [7] = { _name = "DataVersionFilters", _elem = S_DataVersionFilterIB },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x04] = { _name = "SubscribeResponse",
+        [0] = { _name = "SubscriptionId" }, [1] = { _name = "MaxInterval" },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x05] = { _name = "ReportData",
+        [0] = { _name = "SubscriptionId" },
+        [1] = { _name = "AttributeReportIBs", _elem = S_AttributeReportIB },
+        [2] = { _name = "EventReportIBs", _elem = S_EventReportIB },
+        [3] = { _name = "MoreChunkedMessages" }, [4] = { _name = "SuppressResponse" },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x06] = { _name = "WriteRequest",
+        [0] = { _name = "SuppressResponse" }, [1] = { _name = "TimedRequest" },
+        [2] = { _name = "WriteRequests", _elem = S_AttributeDataIB },
+        [3] = { _name = "MoreChunkedMessages" },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x07] = { _name = "WriteResponse",
+        [0] = { _name = "WriteResponses", _elem = S_AttributeStatusIB },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x08] = { _name = "InvokeRequest",
+        [0] = { _name = "SuppressResponse" }, [1] = { _name = "TimedRequest" },
+        [2] = { _name = "InvokeRequests", _elem = S_CommandDataIB },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x09] = { _name = "InvokeResponse",
+        [0] = { _name = "SuppressResponse" },
+        [1] = { _name = "InvokeResponses", _elem = S_InvokeResponseIB },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+    [0x0A] = { _name = "TimedRequest",
+        [0] = { _name = "Timeout" },
+        [255] = { _name = "InteractionModelRevision" },
+    },
+}
+
+local function get_im_schema(protocol_id, opcode)
+    if protocol_id == 0x0001 then return IM_SCHEMAS[opcode] end
+    return nil
+end
+
+----------------------------------------
 -- Key Management
 ----------------------------------------
 local session_keys = {}  -- { {i2r={bytes}, r2i={bytes}, i2r_src={bytes}, r2i_src={bytes}}, ... }
@@ -405,11 +583,13 @@ end
 ----------------------------------------
 -- TLV Decoder (returns human-readable string)
 ----------------------------------------
-local function decode_tlv(data, max_depth)
+local function decode_tlv(data, max_depth, schema)
     max_depth = max_depth or 10
     local pos = 1
     local lines = {}
     local indent = 0
+    local schema_stack = {}
+    local cur_schema = schema
 
     local function read_uint(size)
         if pos + size - 1 > #data then return nil end
@@ -439,6 +619,23 @@ local function decode_tlv(data, max_depth)
         return b
     end
 
+    local function emit(prefix, fn, ts, val_str)
+        if fn then
+            lines[#lines + 1] = prefix .. fn .. " = " .. val_str
+        else
+            lines[#lines + 1] = prefix .. ts .. val_str
+        end
+    end
+
+    local function push_schema(field_schema)
+        table.insert(schema_stack, cur_schema)
+        if field_schema and field_schema._elem then
+            cur_schema = field_schema._elem
+        else
+            cur_schema = field_schema
+        end
+    end
+
     local safety = 0
     while pos <= #data and safety < 500 do
         safety = safety + 1
@@ -450,11 +647,13 @@ local function decode_tlv(data, max_depth)
 
         -- Read tag
         local tag_str = ""
+        local ctx_tag = nil
         if tag_ctrl == 0 then
             tag_str = ""
         elseif tag_ctrl == 1 then
             local t = read_uint(1)
             if not t then break end
+            ctx_tag = t
             tag_str = string.format("Tag=%d ", t)
         elseif tag_ctrl == 2 or tag_ctrl == 4 then
             local t = read_uint(2)
@@ -474,45 +673,70 @@ local function decode_tlv(data, max_depth)
             tag_str = string.format("Tag=%d:%d:%d ", v, p, t)
         end
 
+        -- Schema lookup
+        local field_name, field_schema
+        if cur_schema then
+            if ctx_tag ~= nil then
+                field_schema = cur_schema[ctx_tag]
+            elseif tag_ctrl == 0 then
+                field_schema = cur_schema
+            end
+            if field_schema then field_name = field_schema._name end
+        end
+
         local prefix = string.rep("  ", indent)
+        local c_label = field_name and (field_name .. " ") or tag_str
 
         if elem_type == 0x15 then
-            lines[#lines + 1] = prefix .. tag_str .. "{"
+            lines[#lines + 1] = prefix .. c_label .. "{"
             indent = math.min(indent + 1, max_depth)
+            push_schema(field_schema)
         elseif elem_type == 0x16 then
-            lines[#lines + 1] = prefix .. tag_str .. "["
+            lines[#lines + 1] = prefix .. c_label .. "["
             indent = math.min(indent + 1, max_depth)
+            push_schema(field_schema)
         elseif elem_type == 0x17 then
-            lines[#lines + 1] = prefix .. tag_str .. "List("
+            lines[#lines + 1] = prefix .. c_label .. "List("
             indent = math.min(indent + 1, max_depth)
+            push_schema(field_schema)
         elseif elem_type == 0x18 then
             indent = math.max(0, indent - 1)
             prefix = string.rep("  ", indent)
             lines[#lines + 1] = prefix .. "}"
+            if #schema_stack > 0 then
+                cur_schema = table.remove(schema_stack)
+            end
         elseif elem_type >= 0x00 and elem_type <= 0x03 then
             local size = lshift(1, elem_type)
             local val = read_int(size)
             if not val then break end
-            lines[#lines + 1] = prefix .. tag_str .. tostring(val)
+            emit(prefix, field_name, tag_str, tostring(val))
         elseif elem_type >= 0x04 and elem_type <= 0x07 then
             local size = lshift(1, elem_type - 0x04)
             local val = read_uint(size)
             if not val then break end
+            local val_str
             if size <= 2 then
-                lines[#lines + 1] = prefix .. tag_str .. string.format("0x%x (%d)", val, val)
+                val_str = string.format("0x%x (%d)", val, val)
             else
-                lines[#lines + 1] = prefix .. tag_str .. string.format("0x%x", val)
+                val_str = string.format("0x%x", val)
             end
+            if field_name == "Cluster" and CLUSTER_NAMES[val] then
+                val_str = val_str .. " [" .. CLUSTER_NAMES[val] .. "]"
+            elseif field_name == "Status" and IM_STATUS_NAMES[val] then
+                val_str = val_str .. " [" .. IM_STATUS_NAMES[val] .. "]"
+            end
+            emit(prefix, field_name, tag_str, val_str)
         elseif elem_type == 0x08 then
-            lines[#lines + 1] = prefix .. tag_str .. "false"
+            emit(prefix, field_name, tag_str, "false")
         elseif elem_type == 0x09 then
-            lines[#lines + 1] = prefix .. tag_str .. "true"
+            emit(prefix, field_name, tag_str, "true")
         elseif elem_type == 0x0A then
             pos = pos + 4
-            lines[#lines + 1] = prefix .. tag_str .. "float32"
+            emit(prefix, field_name, tag_str, "float32")
         elseif elem_type == 0x0B then
             pos = pos + 8
-            lines[#lines + 1] = prefix .. tag_str .. "float64"
+            emit(prefix, field_name, tag_str, "float64")
         elseif elem_type >= 0x0C and elem_type <= 0x0F then
             local len_size = lshift(1, elem_type - 0x0C)
             local slen = read_uint(len_size)
@@ -524,7 +748,7 @@ local function decode_tlv(data, max_depth)
             pos = pos + slen
             local str_val = table.concat(chars)
             if slen > 64 then str_val = str_val .. "..." end
-            lines[#lines + 1] = prefix .. tag_str .. '"' .. str_val .. '"'
+            emit(prefix, field_name, tag_str, '"' .. str_val .. '"')
         elseif elem_type >= 0x10 and elem_type <= 0x13 then
             local len_size = lshift(1, elem_type - 0x10)
             local blen = read_uint(len_size)
@@ -533,9 +757,9 @@ local function decode_tlv(data, max_depth)
             if not b then break end
             local hex_str = bytes_to_hex(b)
             if #hex_str > 64 then hex_str = hex_str:sub(1, 64) .. "..." end
-            lines[#lines + 1] = prefix .. tag_str .. "h'" .. hex_str .. "'"
+            emit(prefix, field_name, tag_str, "h'" .. hex_str .. "'")
         elseif elem_type == 0x14 then
-            lines[#lines + 1] = prefix .. tag_str .. "null"
+            emit(prefix, field_name, tag_str, "null")
         else
             lines[#lines + 1] = prefix .. "Unknown(0x" .. string.format("%02x", elem_type) .. ")"
             break
@@ -657,7 +881,7 @@ local function parse_protocol_header(data, offset, tree)
         ph_tree:add(line)
     end
 
-    return next_offset, proto_name, opcode_name
+    return next_offset, proto_name, opcode_name, protocol_id_raw, opcode
 end
 
 ----------------------------------------
@@ -750,7 +974,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
         if cached then
             local dec_tree = subtree:add("Decrypted")
             dec_tree:add("Key: " .. cached.key_name)
-            local proto_off = parse_protocol_header(cached.plaintext, 1, dec_tree)
+            local proto_off, _, _, c_proto_id, c_opcode = parse_protocol_header(cached.plaintext, 1, dec_tree)
 
             -- Decode TLV after protocol header
             if proto_off then
@@ -759,7 +983,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     tlv_data[#tlv_data + 1] = cached.plaintext[i]
                 end
                 if #tlv_data > 0 then
-                    local tlv_lines = decode_tlv(tlv_data, 8)
+                    local im_schema = get_im_schema(c_proto_id, c_opcode)
+                    local tlv_lines = decode_tlv(tlv_data, 8, im_schema)
                     add_tlv_to_tree(dec_tree, tlv_lines)
                 end
             end
@@ -829,7 +1054,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
 
             if pt and key_name then
                 -- Parse protocol header for info column
-                local proto_off, proto_name, opcode_name = parse_protocol_header(pt, 1, subtree:add( "Decrypted (" .. key_name .. ")"))
+                local proto_off, proto_name, opcode_name, d_proto_id, d_opcode = parse_protocol_header(pt, 1, subtree:add( "Decrypted (" .. key_name .. ")"))
 
                 local info_str = nil
                 if proto_name and opcode_name then
@@ -843,7 +1068,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                     local tlv_data = {}
                     for i = proto_off, #pt do tlv_data[#tlv_data + 1] = pt[i] end
                     if #tlv_data > 0 then
-                        local tlv_lines = decode_tlv(tlv_data, 8)
+                        local im_schema = get_im_schema(d_proto_id, d_opcode)
+                        local tlv_lines = decode_tlv(tlv_data, 8, im_schema)
                         add_tlv_to_tree(subtree, tlv_lines)
                     end
                 end
@@ -879,7 +1105,7 @@ function matter_proto.dissector(tvb, pinfo, tree)
         -- Unencrypted message (session establishment)
         if payload_len > 0 then
             local payload_bytes = str_to_bytes(tvb:raw(offset, payload_len))
-            local proto_off, proto_name, opcode_name = parse_protocol_header(payload_bytes, 1, subtree)
+            local proto_off, proto_name, opcode_name, u_proto_id, u_opcode = parse_protocol_header(payload_bytes, 1, subtree)
 
             if proto_name and opcode_name then
                 pinfo.cols.info = string.format("Matter %s: %s", proto_name, opcode_name)
@@ -889,7 +1115,8 @@ function matter_proto.dissector(tvb, pinfo, tree)
                 local tlv_data = {}
                 for i = proto_off, #payload_bytes do tlv_data[#tlv_data + 1] = payload_bytes[i] end
                 if #tlv_data > 0 then
-                    local tlv_lines = decode_tlv(tlv_data, 8)
+                    local im_schema = get_im_schema(u_proto_id, u_opcode)
+                    local tlv_lines = decode_tlv(tlv_data, 8, im_schema)
                     add_tlv_to_tree(subtree, tlv_lines)
                 end
             end
