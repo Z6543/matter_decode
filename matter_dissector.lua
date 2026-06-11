@@ -526,6 +526,7 @@ end
 ----------------------------------------
 local session_keys = {}  -- { {i2r={bytes}, r2i={bytes}, i2r_src={bytes}, r2i_src={bytes}}, ... }
 local keys_cache = ""
+local decrypt_cache = {}  -- decryption results per packet number
 
 local function hex_to_bytes(hex)
     local bytes = {}
@@ -545,18 +546,29 @@ end
 
 local function parse_node_id(s)
     -- Parse node ID (decimal or 0x hex), returns 8-byte LE table
-    local n
+    -- Hex strings are converted byte-by-byte to avoid 32-bit bitop truncation
     if not s or s == "" then
-        n = 0
-    elseif s:sub(1, 2) == "0x" then
-        n = tonumber(s:sub(3), 16) or 0
+        return {0, 0, 0, 0, 0, 0, 0, 0}
+    end
+    local hex
+    if s:sub(1, 2) == "0x" then
+        hex = s:sub(3)
     else
-        n = tonumber(s) or 0
+        local n = tonumber(s) or 0
+        local high = math.floor(n / 4294967296)
+        local low = n % 4294967296
+        hex = string.format("%08x%08x", high, low)
+    end
+    hex = hex:gsub("[^0-9a-fA-F]", "")
+    if #hex < 16 then
+        hex = string.rep("0", 16 - #hex) .. hex
+    elseif #hex > 16 then
+        hex = hex:sub(#hex - 15)
     end
     local bytes = {}
-    for i = 1, 8 do
-        bytes[i] = band(n, 0xFF)
-        n = rshift(n, 8)
+    for i = 8, 1, -1 do
+        local idx = (i - 1) * 2 + 1
+        bytes[9 - i] = tonumber(hex:sub(idx, idx + 1), 16) or 0
     end
     return bytes
 end
@@ -566,6 +578,7 @@ local function load_keys_from_prefs(i2r_hex, r2i_hex, i2r_node_str, r2i_node_str
     if cache_key == keys_cache and #session_keys > 0 then return end
     session_keys = {}
     keys_cache = cache_key
+    decrypt_cache = {}
 
     if not i2r_hex or i2r_hex == "" or not r2i_hex or r2i_hex == "" then return end
 
@@ -592,21 +605,35 @@ local function decode_tlv(data, max_depth, schema)
     local cur_schema = schema
 
     local function read_uint(size)
+        -- Multiplication instead of lshift: bitops truncate to 32 bits,
+        -- corrupting 8-byte TLV integers
         if pos + size - 1 > #data then return nil end
         local val = 0
+        local mult = 1
         for i = 0, size - 1 do
-            val = val + lshift(data[pos + i], i * 8)
+            val = val + data[pos + i] * mult
+            mult = mult * 256
         end
         pos = pos + size
         return val
     end
 
     local function read_int(size)
-        local val = read_uint(size)
-        if not val then return nil end
-        local max_pos = lshift(1, size * 8 - 1)
-        if val >= max_pos then
-            val = val - lshift(1, size * 8)
+        -- Byte-wise two's complement: subtracting 2^64 from a float loses
+        -- precision (e.g. -1 becomes 0 on Lua 5.1/5.2)
+        if pos + size - 1 > #data then return nil end
+        local negative = data[pos + size - 1] >= 0x80
+        local val = 0
+        local mult = 1
+        for i = 0, size - 1 do
+            local b = data[pos + i]
+            if negative then b = 255 - b end
+            val = val + b * mult
+            mult = mult * 256
+        end
+        pos = pos + size
+        if negative then
+            return -(val + 1)
         end
         return val
     end
@@ -716,7 +743,17 @@ local function decode_tlv(data, max_depth, schema)
             local val = read_uint(size)
             if not val then break end
             local val_str
-            if size <= 2 then
+            if size == 8 then
+                -- Split into 32-bit halves: %x on values above 2^31 errors
+                -- or truncates in Lua 5.1/5.2 and LuaJIT
+                local high = math.floor(val / 4294967296)
+                local low = val % 4294967296
+                if high > 0 then
+                    val_str = string.format("0x%x%08x", high, low)
+                else
+                    val_str = string.format("0x%x", low)
+                end
+            elseif size <= 2 then
                 val_str = string.format("0x%x (%d)", val, val)
             else
                 val_str = string.format("0x%x", val)
@@ -777,11 +814,6 @@ local function add_tlv_to_tree(tree, tlv_lines)
 end
 
 ----------------------------------------
--- Decryption result cache (per packet number)
-----------------------------------------
-local decrypt_cache = {}
-
-----------------------------------------
 -- Wireshark Protocol Definition
 ----------------------------------------
 local matter_proto = Proto("matter_decrypt", "Matter Protocol")
@@ -819,7 +851,7 @@ matter_proto.prefs.r2i_node = Pref.string("r2i_src_node", "0", "R2I sender node 
 -- Protocol Header Parser
 ----------------------------------------
 local function parse_protocol_header(data, offset, tree)
-    if offset + 6 > #data then return nil end
+    if offset + 5 > #data then return nil end
 
     local exchange_flags = data[offset]
     local opcode = data[offset + 1]
@@ -830,7 +862,7 @@ local function parse_protocol_header(data, offset, tree)
 
     -- Check V flag (vendor ID present) in exchange flags bit 4
     if band(exchange_flags, 0x10) ~= 0 then
-        if next_offset + 2 > #data then return nil end
+        if next_offset + 1 > #data then return nil end
         vendor_id = protocol_id_raw
         protocol_id_raw = data[next_offset] + lshift(data[next_offset + 1], 8)
         next_offset = next_offset + 2
@@ -839,7 +871,7 @@ local function parse_protocol_header(data, offset, tree)
     -- Check A flag (ack counter present) in exchange flags bit 1
     local ack_counter = nil
     if band(exchange_flags, 0x02) ~= 0 then
-        if next_offset + 4 > #data then return nil end
+        if next_offset + 3 > #data then return nil end
         ack_counter = data[next_offset] + lshift(data[next_offset + 1], 8)
             + lshift(data[next_offset + 2], 16) + lshift(data[next_offset + 3], 24)
         next_offset = next_offset + 4
